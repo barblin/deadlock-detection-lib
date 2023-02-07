@@ -1,0 +1,101 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'signing'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {}
+
+testing {
+    suites {
+        test {
+            useJUnitJupiter('5.9.1')
+        }
+    }
+}
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+    archiveClassifier.set("sources")
+    from sourceSets.main.allSource
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    archiveClassifier.set("javadoc")
+    from javadoc.destinationDir
+}
+
+publishing {
+    publications {
+        release(MavenPublication) {
+            pom {
+                name = 'Deadlock Detection'
+                description = 'Library to detect deadlocks by detecting circles in a thread/lock graph'
+                url = "https://github.com/${property('devOrg')}/${rootProject.name}/blob/master/README.md"
+                licenses {
+                    license {
+                        name = 'MIT License'
+                        url = 'https://opensource.org/licenses/MIT'
+                    }
+                }
+                developers {
+                    developer {
+                        id = property('devId')
+                        name = property('devName')
+                        email = property('devEmail')
+                        organization = property('devOrg')
+                        organizationUrl = property('devOrgUrl')
+                    }
+                }
+                scm {
+                    connection = "https://github.com/${property('devOrg')}/${rootProject.name}.git"
+                    developerConnection = "scm:git:ssh:github.com/${property('devOrg')}/${rootProject.name}.git"
+                    url = "https://github.com/${property('devOrg')}/${rootProject.name}/tree/master"
+                }
+            }
+
+            groupId = "io.github.${property('devOrg')}"
+            artifactId = "deadlock-detection"
+            version = "0.0.1"
+            from components.java
+
+            artifact(sourcesJar) {
+                classifier = 'sources'
+            }
+            artifact(javadocJar) {
+                classifier = 'javadoc'
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            url = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
+            credentials {
+                username = property('mavenCentralUsername')
+                password = property('mavenCentralPassword')
+            }
+        }
+        maven {
+            url = uri("https://maven.pkg.github.com/${property('devOrg')}/${rootProject.name}")
+            credentials {
+                username = property('githubUsername')
+                password = property('githubPassword')
+            }
+        }
+    }
+}
+
+
+signing {
+    useGpgCmd()
+    sign publishing.publications.release
+}
+
+task signPom(type: Sign) {
+    sign project.file('build/publications/maven/pom-default.xml')
+    outputs.upToDateWhen { false }
+}
