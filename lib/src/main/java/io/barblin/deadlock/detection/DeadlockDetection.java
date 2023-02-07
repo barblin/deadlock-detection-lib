@@ -6,49 +6,43 @@ import java.util.concurrent.locks.Lock;
 
 import static java.lang.Thread.currentThread;
 
-public final class DeadlockGraph {
+public final class DeadlockDetection {
 
     private final Map<Lock, Long> lockedBy;
     private final Map<Long, Set<Lock>> waitingFor;
+    private final AtomicBoolean detectionInProgress;
     private final AtomicBoolean lockInProgress;
     private final AtomicBoolean unlockInProgress;
 
-    public DeadlockGraph() {
+    public DeadlockDetection() {
         lockedBy = new HashMap<>();
         waitingFor = new HashMap<>();
+        detectionInProgress = new AtomicBoolean(false);
         lockInProgress = new AtomicBoolean(false);
         unlockInProgress = new AtomicBoolean(false);
     }
 
     public boolean tryLock(Lock lock) {
         validateLock(lock);
+        Long threadId = currentThread().getId();
+
+        if (!lockAttemptPossible(threadId, lock)) {
+            return false;
+        }
 
         try {
             while (!lockInProgress.compareAndSet(false, true)) {
             }
-
-            Long threadId = currentThread().getId();
-
-            if (threadId.equals(lockedBy.get(lock))) {
-                return true;
-            }
-
-            if (isDeadlock(threadId, lock)) {
-                return false;
-            }
-
-            addWaitingFor(threadId, lock);
-            lockInProgress.compareAndSet(true, false);
-
-            boolean success = lock.tryLock();
-            removeWaitingFor(threadId, lock);
-
-            return success;
-
+            lock.lock();
+            lockedBy.put(lock, threadId);
         } catch (Exception ex) {
-            lockInProgress.compareAndSet(true, false);
             return false;
+        } finally {
+            lockInProgress.compareAndSet(true, false);
         }
+
+        removeWaitingFor(threadId, lock);
+        return true;
     }
 
     public void unlock(Lock lock) {
@@ -57,12 +51,32 @@ public final class DeadlockGraph {
         try {
             while (!unlockInProgress.compareAndSet(false, true)) {
             }
-
             lock.unlock();
             lockedBy.remove(lock);
         } finally {
-            unlockInProgress.set(false);
+            unlockInProgress.compareAndSet(true, false);
         }
+    }
+
+    public Set<Lock> getWaitingFor(Long threadId) {
+        return waitingFor.getOrDefault(threadId, new HashSet<>());
+    }
+
+    private boolean lockAttemptPossible(Long threadId, Lock lock) {
+        try {
+            while (!detectionInProgress.compareAndSet(false, true)) {
+            }
+            if (isDeadlock(threadId, lock)) {
+                return false;
+            }
+            addWaitingFor(threadId, lock);
+        } catch (Exception ex) {
+            return false;
+        } finally {
+            detectionInProgress.compareAndSet(true, false);
+        }
+
+        return true;
     }
 
     private boolean isDeadlock(Long threadId, Lock lock) {
@@ -73,18 +87,6 @@ public final class DeadlockGraph {
         }
 
         return false;
-    }
-
-    private void addWaitingFor(Long threadId, Lock lock) {
-        Set<Lock> waitingForLocks = waitingFor.get(threadId);
-        waitingForLocks.add(lock);
-        waitingFor.put(threadId, waitingForLocks);
-    }
-
-    private void removeWaitingFor(Long threadId, Lock lock) {
-        Set<Lock> waitForLocks = waitingFor.get(threadId);
-        waitForLocks.remove(lock);
-        waitingFor.put(threadId, waitForLocks);
     }
 
     private boolean containsCircle(Lock lock, long threadId) {
@@ -105,10 +107,23 @@ public final class DeadlockGraph {
                 }
 
                 locks.addAll(waitingFor.get(currentThreadId));
+                visited.add(currentThreadId);
             }
         }
 
         return false;
+    }
+
+    private void addWaitingFor(Long threadId, Lock lock) {
+        Set<Lock> waitingForLocks = waitingFor.getOrDefault(threadId, new HashSet<>());
+        waitingForLocks.add(lock);
+        waitingFor.put(threadId, waitingForLocks);
+    }
+
+    private void removeWaitingFor(Long threadId, Lock lock) {
+        Set<Lock> waitForLocks = waitingFor.getOrDefault(threadId, new HashSet<>());
+        waitForLocks.remove(lock);
+        waitingFor.put(threadId, waitForLocks);
     }
 
     private void validateLock(Lock lock) {
